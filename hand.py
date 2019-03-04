@@ -50,11 +50,23 @@ class HandConfig(Config):
     # TODO 以下都是新改的
 
     # Pooled ROIs
-    POOL_SIZE = 7
-    MASK_POOL_SIZE = 14
-    MASK_SHAPE = [28, 28]
+    POOL_SIZE = 7 # 给分类器用的
+    MASK_POOL_SIZE = 28 # 传给MSAK分支的feature map 大小
+    MASK_SHAPE = [56, 56] # 生成的最终mask大小
 
+    # If enabled, resizes instance masks to a smaller size to reduce
+    # memory load. Recommended when using high-resolution images.
+    USE_MINI_MASK = True
+    MINI_MASK_SHAPE = (112, 112)  # (height, width) of the mini-mask
 
+    # Input image resing
+    # Images are resized such that the smallest side is >= IMAGE_MIN_DIM and
+    # the longest side is <= IMAGE_MAX_DIM. In case both conditions can't
+    # be satisfied together the IMAGE_MAX_DIM is enforced.
+    IMAGE_MIN_DIM = 640
+    IMAGE_MAX_DIM = 768
+    # If True, pad images with zeros such that they're (max_dim by max_dim)
+    IMAGE_PADDING = True  # currently, the False option is not supported
 
 
 
