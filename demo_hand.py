@@ -25,7 +25,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # Path to trained weights file
 # Download this file and place in the root of your
 # project (See README file for details)
-HAND_MODEL_PATH = '/home/dl/Work/pytorch-mask-rcnn/logs/hand20190301T1940/mask_rcnn_hand_0152.pth'
+HAND_MODEL_PATH = '/home/dl/Work/pytorch-mask-rcnn/logs/hand20190304T1855/mask_rcnn_hand_0216.pth'
 
 # Directory of images to run detection on
 IMAGE_DIR = '/home/dl/Work/pytorch-mask-rcnn/hand_instance/images/val'

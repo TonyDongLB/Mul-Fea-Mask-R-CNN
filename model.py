@@ -191,6 +191,71 @@ class FPN(nn.Module):
 
 
 ############################################################
+#  HED Graph
+############################################################
+
+class HED(nn.Module):
+    def __init__(self, in_channels):
+        super(HED, self).__init__()
+        self.in_channels = in_channels
+        self.P2_conv = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
+        )
+        self.P3_conv = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
+        )
+        self.P4_conv = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
+        )
+        self.P5_conv = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
+        )
+        self.moduleCombine = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=4 * 16, out_channels= 4 * 16, kernel_size=1, stride=1, padding=0),
+            torch.nn.ReLU(inplace=False),
+            torch.nn.Conv2d(in_channels=4 * 16, out_channels=1, kernel_size=1, stride=1, padding=0),
+            torch.nn.Sigmoid(),
+        )
+    def forward(self, input):
+        [p2, p3, p4, p5] = input
+        p2 = self.P2_conv(p2)
+        p3 = self.P3_conv(p3)
+        p4 = self.P4_conv(p4)
+        p5 = self.P5_conv(p5)
+
+        p3 = torch.nn.functional.interpolate(input=p3,
+                                             size=(p2.size(2), p2.size(3)),
+                                             mode='bilinear', align_corners=False)
+        p4 = torch.nn.functional.interpolate(input=p4,
+                                             size=(p2.size(2), p2.size(3)),
+                                             mode='bilinear', align_corners=False)
+        p5 = torch.nn.functional.interpolate(input=p5,
+                                             size=(p2.size(2), p2.size(3)),
+                                             mode='bilinear', align_corners=False)
+        return torch.cat([p2, p3, p4, p5], 1), self.moduleCombine(
+            torch.cat([p2, p3, p4, p5], 1))
+
+############################################################
 #  Resnet Graph
 ############################################################
 
@@ -2256,7 +2321,7 @@ class MaskRCNN_Hand(nn.Module):
         if not dir_names:
             return None, None
         # Pick last directory
-        dir_name = os.path.join(self.model_dir, dir_names[-2])
+        dir_name = os.path.join(self.model_dir, dir_names[-1])
         # Find the last checkpoint
         checkpoints = next(os.walk(dir_name))[2]
         checkpoints = filter(lambda f: f.startswith("mask_rcnn"), checkpoints)
@@ -2482,6 +2547,7 @@ class MaskRCNN_Hand(nn.Module):
             "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
             "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
             "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
+            "mask": r"(mask.*)",
             # All layers
             "all": ".*",
         }

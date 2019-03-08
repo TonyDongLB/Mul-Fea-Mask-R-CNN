@@ -78,12 +78,15 @@ class Hand(torch.utils.data.Dataset):
     """
     输出类似于COCO数据格式
     """
-    def __init__(self, mode, config, augment=True):
+    def __init__(self, mode, config, augment=True, only_json=False):
         super(Hand, self).__init__()
         self.config = config
         self.augment = augment
         if mode == 'train':
-            self.imgs = glob.glob('./hand_instance/images/train/*.jpg')
+            if only_json:
+                self.imgs = []
+            else:
+                self.imgs = glob.glob('./hand_instance/images/train/*.jpg')
             self.jsons = glob.glob('./hand_instance/jsons/*.json')
             self.num_of_imgs = len(self.imgs)
             self.num_of_jsons = len(self.jsons)
@@ -405,7 +408,7 @@ if __name__ == '__main__':
                         help='Directory of the MS-COCO dataset')
 
     parser.add_argument('--model', required=False,
-                        default='coco',
+                        default='last',
                         metavar="/path/to/weights.pth",
                         help="Path to weights .pth file or 'coco'")
 
@@ -470,7 +473,7 @@ if __name__ == '__main__':
     if args.command == "train":
         # Training dataset. Use the training set and 35K from the
         # validation set, as as in the Mask RCNN paper.
-        dataset_train = Hand(mode='train',config=config)
+        dataset_train = Hand(mode='train',config=config, only_json=True)
 
         # Validation dataset
         dataset_val = Hand(mode='val',config=config)
@@ -478,27 +481,34 @@ if __name__ == '__main__':
         # *** This training schedule is an example. Update to your needs ***
 
         # Training - Stage 1
-        print("Training network heads")
+        print("Training Mask")
         model.train_model(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=40,
-                    layers='heads')
+                    epochs=216,
+                    layers='mask')
 
-        # Training - Stage 2
-        # Finetune layers from ResNet stage 4 and up
-        print("Fine tune Resnet stage 4 and up")
-        model.train_model(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
-                    epochs=120,
-                    layers='4+')
-
-        # Training - Stage 3
-        # Fine tune all layers
-        print("Fine tune all layers")
-        model.train_model(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 10,
-                    epochs=160,
-                    layers='all')
+        # # Training - Stage 1
+        # print("Training network heads")
+        # model.train_model(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE,
+        #             epochs=40,
+        #             layers='heads')
+        #
+        # # Training - Stage 2
+        # # Finetune layers from ResNet stage 4 and up
+        # print("Fine tune Resnet stage 4 and up")
+        # model.train_model(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE,
+        #             epochs=120,
+        #             layers='4+')
+        #
+        # # Training - Stage 3
+        # # Fine tune all layers
+        # print("Fine tune all layers")
+        # model.train_model(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE / 10,
+        #             epochs=160,
+        #             layers='all')
 
     elif args.command == "evaluate":
         # Validation dataset
