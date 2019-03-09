@@ -19,6 +19,7 @@ if "DISPLAY" not in os.environ:
 import matplotlib.patches as patches
 import matplotlib.lines as lines
 from matplotlib.patches import Polygon
+import cv2
 
 import utils
 
@@ -77,7 +78,8 @@ def apply_mask(image, mask, color, alpha=0.5):
 
 def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
-                      figsize=(16, 16), ax=None):
+                      figsize=(16, 16), ax=None,
+                      file_name=None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -144,9 +146,15 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
-    ax.imshow(masked_image.astype(np.uint8))
-    plt.show()
-    
+    if file_name is not None:
+        masked_image = masked_image.astype(np.uint8)
+        r, g, b = cv2.split(masked_image)
+        masked_image = cv2.merge((b, g, r))
+        cv2.imwrite(file_name, masked_image)
+    else:
+        ax.imshow(masked_image.astype(np.uint8))
+        plt.show()
+
 
 def draw_rois(image, rois, refined_rois, mask, class_ids, class_names, limit=10):
     """
@@ -489,17 +497,4 @@ def plot_loss(loss, val_loss, save=True, log_dir=None):
         plt.show(block=False)
         plt.pause(0.1)
 
-    plt.figure("hed_loss")
-    plt.gcf().clear()
-    plt.plot(loss[:, 6], label='train')
-    plt.plot(val_loss[:, 6], label='valid')
-    plt.xlabel('epoch')
-    plt.ylabel('loss')
-    plt.legend()
-    if save:
-        save_path = os.path.join(log_dir, "hed_loss.png")
-        plt.savefig(save_path)
-    else:
-        plt.show(block=False)
-        plt.pause(0.1)
 

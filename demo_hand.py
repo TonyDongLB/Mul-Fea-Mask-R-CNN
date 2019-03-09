@@ -25,7 +25,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # Path to trained weights file
 # Download this file and place in the root of your
 # project (See README file for details)
-HAND_MODEL_PATH = '/home/dl/Work/pytorch-mask-rcnn/logs/hand20190304T1855/mask_rcnn_hand_0247.pth'
+HAND_MODEL_PATH = '/home/dl/Work/pytorch-mask-rcnn/logs/hand20190304T1855/mask_rcnn_hand_0316.pth'
 
 # Directory of images to run detection on
 IMAGE_DIR = '/home/dl/Work/pytorch-mask-rcnn/hand_instance/images/val'
@@ -56,13 +56,14 @@ class_names = ['BG', 'hand']
 
 # Load a random image from the images folder
 file_names = next(os.walk(IMAGE_DIR))[2]
-image = skimage.io.imread(os.path.join(IMAGE_DIR, random.choice(file_names)))
 
-# Run detection
-results = model.detect([image])
+for file_name in file_names:
+    image = skimage.io.imread(os.path.join(IMAGE_DIR, file_name))
+    # Run detection
+    results = model.detect([image])
 
 # Visualize results
-r = results[0]
-visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
-                            class_names, r['scores'])
-plt.show()
+    r = results[0]
+    visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
+                            class_names, r['scores'], file_name=file_name)
+    plt.show()
