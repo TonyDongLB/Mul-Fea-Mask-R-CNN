@@ -489,4 +489,17 @@ def plot_loss(loss, val_loss, save=True, log_dir=None):
         plt.show(block=False)
         plt.pause(0.1)
 
+    plt.figure("hed_loss")
+    plt.gcf().clear()
+    plt.plot(loss[:, 6], label='train')
+    plt.plot(val_loss[:, 6], label='valid')
+    plt.xlabel('epoch')
+    plt.ylabel('loss')
+    plt.legend()
+    if save:
+        save_path = os.path.join(log_dir, "hed_loss.png")
+        plt.savefig(save_path)
+    else:
+        plt.show(block=False)
+        plt.pause(0.1)
 

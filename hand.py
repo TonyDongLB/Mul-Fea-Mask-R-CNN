@@ -142,6 +142,14 @@ class Hand(torch.utils.data.Dataset):
                 class_ids.append(1)
             gt_class_ids = np.array(class_ids, dtype=np.int32)
 
+        # 为HED分支生成gt
+        gt_edge = np.zeros((instance_masks[0].shape[0], instance_masks[0].shape[1]), dtype=instance_masks[0].dtype)
+        for mask in instance_masks:
+            ret, binary = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY)
+            mask, contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(gt_edge, contours, -1, 1, 4)
+
+        gt_edge = gt_edge[:, :, np.newaxis]
         for i in range(len(instance_masks)):
             instance_masks[i] = instance_masks[i][:,:, np.newaxis]
 
@@ -150,12 +158,14 @@ class Hand(torch.utils.data.Dataset):
             choice_1 = random.randint(0, 2)
             if choice_1 == 1:
                 instance_masks.append(image)
+                instance_masks.append(gt_edge)
                 instance_masks = self.random_flip(instance_masks, u=1)
-                instance_masks, image = instance_masks[: -1], instance_masks[-1]
+                instance_masks, image, gt_edge = instance_masks[: -2], instance_masks[-2], instance_masks[-1]
             if choice_1 == 2:
                 instance_masks.append(image)
+                instance_masks.append(gt_edge)
                 instance_masks = self.random_rotate(instance_masks, u=1)
-                instance_masks, image = instance_masks[: -1], instance_masks[-1]
+                instance_masks, image, gt_edge = instance_masks[: -2], instance_masks[-2], instance_masks[-1]
             choice_2 = random.randint(0, 3)
             if choice_2 == 1:
                 image = self.random_brightness([image], u=1)[0]
@@ -170,7 +180,6 @@ class Hand(torch.utils.data.Dataset):
         for i in range(len(instance_masks)):
             instance_masks[i] = instance_masks[i][:,:, 0]
 
-
         gt_masks = np.stack(instance_masks, axis=2)
 
         shape = image.shape
@@ -180,6 +189,7 @@ class Hand(torch.utils.data.Dataset):
             max_dim=config.IMAGE_MAX_DIM,
             padding=config.IMAGE_PADDING)
         gt_masks = utils.resize_mask(gt_masks, scale, padding)
+        gt_edge = utils.resize_mask(gt_edge, scale, padding)
 
         # Bounding boxes. Note that some boxes might be all zeros
         # if the corresponding mask got cropped out.
@@ -208,8 +218,9 @@ class Hand(torch.utils.data.Dataset):
         gt_class_ids = torch.from_numpy(gt_class_ids)
         gt_boxes = torch.from_numpy(gt_boxes).float()
         gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
+        gt_edge = torch.from_numpy(gt_edge.astype(int).transpose(2, 0, 1)).float()
 
-        return images, image_metas, rpn_match, rpn_bbox, gt_class_ids, gt_boxes, gt_masks
+        return images, image_metas, rpn_match, rpn_bbox, gt_class_ids, gt_boxes, gt_masks, gt_edge
 
     def display_instances(self, image, boxes, masks, class_ids):
         import visualize
@@ -473,7 +484,7 @@ if __name__ == '__main__':
     if args.command == "train":
         # Training dataset. Use the training set and 35K from the
         # validation set, as as in the Mask RCNN paper.
-        dataset_train = Hand(mode='train',config=config, only_json=True)
+        dataset_train = Hand(mode='train',config=config, only_json=False)
 
         # Validation dataset
         dataset_val = Hand(mode='val',config=config)
@@ -484,7 +495,7 @@ if __name__ == '__main__':
         print("Training Mask")
         model.train_model(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=216,
+                    epochs=316,
                     layers='mask')
 
         # # Training - Stage 1

@@ -26,6 +26,8 @@ import visualize
 from nms.nms_wrapper import nms
 from roialign.roi_align.crop_and_resize import CropAndResizeFunction
 
+from focalloss2d import FocalLoss2d
+
 
 ############################################################
 #  Logging Utility Functions
@@ -200,41 +202,42 @@ class HED(nn.Module):
         self.in_channels = in_channels
         self.P2_conv = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            nn.Conv2d(self.in_channels, self.in_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.in_channels, eps=0.001, momentum=0.01),
             torch.nn.ReLU(),
             torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
         )
         self.P3_conv = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            nn.Conv2d(self.in_channels, self.in_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.in_channels, eps=0.001, momentum=0.01),
             torch.nn.ReLU(),
             torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
         )
         self.P4_conv = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            nn.Conv2d(self.in_channels, self.in_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.in_channels, eps=0.001, momentum=0.01),
             torch.nn.ReLU(),
             torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
         )
         self.P5_conv = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-            nn.BatchNorm2d(self.out_channels, eps=0.001, momentum=0.01),
+            nn.Conv2d(self.in_channels, self.in_channels, kernel_size=3, stride=1),
+            nn.BatchNorm2d(self.in_channels, eps=0.001, momentum=0.01),
             torch.nn.ReLU(),
             torch.nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(16, eps=0.001, momentum=0.01),
         )
         self.moduleCombine = torch.nn.Sequential(
-            torch.nn.Conv2d(in_channels=4 * 16, out_channels= 4 * 16, kernel_size=1, stride=1, padding=0),
-            torch.nn.ReLU(inplace=False),
-            torch.nn.Conv2d(in_channels=4 * 16, out_channels=1, kernel_size=1, stride=1, padding=0),
-            torch.nn.Sigmoid(),
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(in_channels=4 * 16, out_channels=4 * 16, kernel_size=3, stride=1),
+            nn.BatchNorm2d(4 * 16, eps=0.001, momentum=0.01),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=4 * 16, out_channels=2, kernel_size=1, stride=1, padding=0),
         )
     def forward(self, input):
         [p2, p3, p4, p5] = input
@@ -243,15 +246,9 @@ class HED(nn.Module):
         p4 = self.P4_conv(p4)
         p5 = self.P5_conv(p5)
 
-        p3 = torch.nn.functional.interpolate(input=p3,
-                                             size=(p2.size(2), p2.size(3)),
-                                             mode='bilinear', align_corners=False)
-        p4 = torch.nn.functional.interpolate(input=p4,
-                                             size=(p2.size(2), p2.size(3)),
-                                             mode='bilinear', align_corners=False)
-        p5 = torch.nn.functional.interpolate(input=p5,
-                                             size=(p2.size(2), p2.size(3)),
-                                             mode='bilinear', align_corners=False)
+        p3 = F.upsample(p3, scale_factor=2)
+        p4 = F.upsample(p4, scale_factor=4)
+        p5 = F.upsample(p5, scale_factor=8)
         return torch.cat([p2, p3, p4, p5], 1), self.moduleCombine(
             torch.cat([p2, p3, p4, p5], 1))
 
@@ -463,7 +460,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
 #  ROIAlign Layer
 ############################################################
 
-def pyramid_roi_align(inputs, pool_size, image_shape):
+def pyramid_roi_align(inputs, pool_size, image_shape, indicate_layers=None):
     """Implements ROI Pooling on multiple levels of the feature pyramid.
 
     Params:
@@ -507,6 +504,9 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
     roi_level = 4 + log2(torch.sqrt(h*w)/(224.0/torch.sqrt(image_area)))
     roi_level = roi_level.round().int()
     roi_level = roi_level.clamp(2,5)
+    roi_level = roi_level.clamp(2,2 + len(feature_maps) -1)
+    if indicate_layers is not None:
+        roi_level = roi_level.clamp(indicate_layers, indicate_layers)
 
 
     # Loop through levels and apply ROI pooling to each. P2 to P5.
@@ -1012,21 +1012,24 @@ class Mask(nn.Module):
         self.image_shape = image_shape
         self.num_classes = num_classes
         self.padding = SamePad2d(kernel_size=3, stride=1)
-        self.conv1 = nn.Conv2d(self.depth, 256, kernel_size=3, stride=1)
-        self.bn1 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv2 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn2 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv3 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv4 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn4 = nn.BatchNorm2d(256, eps=0.001)
-        self.deconv = nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2)
-        self.conv5 = nn.Conv2d(256, num_classes, kernel_size=1, stride=1)
+        self.conv1 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn1 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.conv2 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn2 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.conv3 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn3 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.conv4 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn4 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.deconv = nn.ConvTranspose2d(self.depth, self.depth, kernel_size=2, stride=2)
+        self.conv5 = nn.Conv2d(self.depth, num_classes, kernel_size=1, stride=1)
         self.sigmoid = nn.Sigmoid()
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x, rois):
+    def forward(self, x, edge_fea, rois):
         x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
+        edge_fea = pyramid_roi_align([rois] + [edge_fea], self.pool_size, self.image_shape)
+        edge_fea = edge_fea.detach()
+        x = torch.cat((x, edge_fea), dim=1)
         x = self.conv1(self.padding(x))
         x = self.bn1(x)
         x = self.relu(x)
@@ -1046,7 +1049,7 @@ class Mask(nn.Module):
 
         return x
 
-
+# TODO 等待更新
 class Mask_changed(nn.Module):
     def __init__(self, depth, pool_size, image_shape, num_classes):
         super(Mask_changed, self).__init__()
@@ -1055,16 +1058,16 @@ class Mask_changed(nn.Module):
         self.image_shape = image_shape
         self.num_classes = num_classes
         self.padding = SamePad2d(kernel_size=3, stride=1)
-        self.conv1 = nn.Conv2d(self.depth, 256, kernel_size=3, stride=1)
-        self.bn1 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv2 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn2 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv3 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv4 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn4 = nn.BatchNorm2d(256, eps=0.001)
-        self.deconv = nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2)
-        self.conv5 = nn.Conv2d(256, num_classes, kernel_size=1, stride=1)
+        self.conv1 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn1 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.conv2 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn2 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.conv3 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn3 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.conv4 = nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1)
+        self.bn4 = nn.BatchNorm2d(self.depth, eps=0.001)
+        self.deconv = nn.ConvTranspose2d(self.depth, self.depth, kernel_size=2, stride=2)
+        self.conv5 = nn.Conv2d(self.depth, num_classes, kernel_size=1, stride=1)
         self.sigmoid = nn.Sigmoid()
         self.relu = nn.ReLU(inplace=True)
 
@@ -1227,15 +1230,27 @@ def compute_mrcnn_mask_loss(target_masks, target_class_ids, pred_masks):
 
     return loss
 
-def compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask):
+def compute_hed_loss(target_mask, pred_mask):
+    pred_mask = F.upsample(pred_mask, scale_factor=4)
+    weight = torch.Tensor([1, 1000])
+    if pred_mask.is_cuda:
+        weight = weight.cuda()
+    loss = FocalLoss2d(weight=weight)(pred_mask, target_mask)
+    return loss
+
+def compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox,
+                   target_class_ids, mrcnn_class_logits, target_deltas,
+                   mrcnn_bbox, target_mask, mrcnn_mask,
+                   gt_edge, hed_edge):
 
     rpn_class_loss = compute_rpn_class_loss(rpn_match, rpn_class_logits)
     rpn_bbox_loss = compute_rpn_bbox_loss(rpn_bbox, rpn_match, rpn_pred_bbox)
     mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
     mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
     mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
+    hed_loss = compute_hed_loss(gt_edge, hed_edge)
 
-    return [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
+    return [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss, hed_loss]
 
 
 ############################################################
@@ -2218,6 +2233,9 @@ class MaskRCNN_Hand(nn.Module):
         # TODO: add assert to varify feature map sizes match what's in config
         self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
+        # 边缘检测网络
+        self.hed = HED(in_channels=256)
+
         # Generate Anchors
         self.anchors = Variable(torch.from_numpy(utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
                                                                                 config.RPN_ANCHOR_RATIOS,
@@ -2234,7 +2252,7 @@ class MaskRCNN_Hand(nn.Module):
         self.classifier = Classifier(256, config.POOL_SIZE, config.IMAGE_SHAPE, config.NUM_CLASSES)
 
         # FPN Mask
-        self.mask = Mask(256, config.MASK_POOL_SIZE, config.IMAGE_SHAPE, config.NUM_CLASSES)
+        self.mask = Mask(256 + 64, config.MASK_POOL_SIZE, config.IMAGE_SHAPE, config.NUM_CLASSES)
 
         # Fix batch norm layers
         def set_bn_fix(m):
@@ -2343,8 +2361,11 @@ class MaskRCNN_Hand(nn.Module):
             model_dict = self.state_dict()
             not_loaded = []
             for model_key, model_val in model_dict.items():
-                if model_val.size() == load_dict[model_key].size():
-                    new_dict[model_key] = load_dict[model_key]
+                if model_key in load_dict.keys():
+                    if model_val.size() == load_dict[model_key].size():
+                        new_dict[model_key] = load_dict[model_key]
+                    else:
+                        not_loaded.append(model_key)
                 else:
                     not_loaded.append(model_key)
             model_dict.update(new_dict)
@@ -2427,6 +2448,9 @@ class MaskRCNN_Hand(nn.Module):
         rpn_feature_maps = [p2_out, p3_out, p4_out, p5_out, p6_out]
         mrcnn_feature_maps = [p2_out, p3_out, p4_out, p5_out]
 
+        # HED子网络
+        feature_hed, output_hed = self.hed(mrcnn_feature_maps)
+
         # Loop through pyramid layers
         layer_outputs = []  # list of lists
         for p in rpn_feature_maps:
@@ -2473,7 +2497,7 @@ class MaskRCNN_Hand(nn.Module):
             detection_boxes = detection_boxes.unsqueeze(0)
 
             # Create masks for detections
-            mrcnn_mask = self.mask(mrcnn_feature_maps, detection_boxes)
+            mrcnn_mask = self.mask(mrcnn_feature_maps, feature_hed, detection_boxes)
 
             # Add back batch dimension
             detections = detections.unsqueeze(0)
@@ -2517,9 +2541,9 @@ class MaskRCNN_Hand(nn.Module):
                 mrcnn_class_logits, mrcnn_class, mrcnn_bbox = self.classifier(mrcnn_feature_maps, rois)
 
                 # Create masks for detections
-                mrcnn_mask = self.mask(mrcnn_feature_maps, rois)
+                mrcnn_mask = self.mask(mrcnn_feature_maps, feature_hed, rois)
 
-            return [rpn_class_logits, rpn_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
+            return [rpn_class_logits, rpn_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, output_hed]
 
     def train_model(self, train_dataset, val_dataset, learning_rate, epochs, layers):
         """Train the model.
@@ -2548,6 +2572,7 @@ class MaskRCNN_Hand(nn.Module):
             "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
             "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
             "mask": r"(mask.*)",
+            "mask&hed": r"(mask.*)|(hed*)",
             # All layers
             "all": ".*",
         }
@@ -2577,14 +2602,14 @@ class MaskRCNN_Hand(nn.Module):
             log("Epoch {}/{}.".format(epoch,epochs))
 
             # Training
-            loss, loss_rpn_class, loss_rpn_bbox, loss_mrcnn_class, loss_mrcnn_bbox, loss_mrcnn_mask = self.train_epoch(train_generator, optimizer, self.config.STEPS_PER_EPOCH)
+            loss, loss_rpn_class, loss_rpn_bbox, loss_mrcnn_class, loss_mrcnn_bbox, loss_mrcnn_mask, loss_hed = self.train_epoch(train_generator, optimizer, self.config.STEPS_PER_EPOCH)
 
             # Validation
-            val_loss, val_loss_rpn_class, val_loss_rpn_bbox, val_loss_mrcnn_class, val_loss_mrcnn_bbox, val_loss_mrcnn_mask = self.valid_epoch(val_generator, self.config.VALIDATION_STEPS)
+            val_loss, val_loss_rpn_class, val_loss_rpn_bbox, val_loss_mrcnn_class, val_loss_mrcnn_bbox, val_loss_mrcnn_mask, val_loss_hed = self.valid_epoch(val_generator, self.config.VALIDATION_STEPS)
 
             # Statistics
-            self.loss_history.append([loss, loss_rpn_class, loss_rpn_bbox, loss_mrcnn_class, loss_mrcnn_bbox, loss_mrcnn_mask])
-            self.val_loss_history.append([val_loss, val_loss_rpn_class, val_loss_rpn_bbox, val_loss_mrcnn_class, val_loss_mrcnn_bbox, val_loss_mrcnn_mask])
+            self.loss_history.append([loss, loss_rpn_class, loss_rpn_bbox, loss_mrcnn_class, loss_mrcnn_bbox, loss_mrcnn_mask, loss_hed])
+            self.val_loss_history.append([val_loss, val_loss_rpn_class, val_loss_rpn_bbox, val_loss_mrcnn_class, val_loss_mrcnn_bbox, val_loss_mrcnn_mask, val_loss_hed])
             visualize.plot_loss(self.loss_history, self.val_loss_history, save=True, log_dir=self.log_dir)
 
             # Save model
@@ -2600,6 +2625,7 @@ class MaskRCNN_Hand(nn.Module):
         loss_mrcnn_class_sum = 0
         loss_mrcnn_bbox_sum = 0
         loss_mrcnn_mask_sum = 0
+        loss_hed_sum = 0
         step = 0
 
         optimizer.zero_grad()
@@ -2614,6 +2640,7 @@ class MaskRCNN_Hand(nn.Module):
             gt_class_ids = inputs[4]
             gt_boxes = inputs[5]
             gt_masks = inputs[6]
+            gt_edge = inputs[7]
 
             # image_metas as numpy array
             image_metas = image_metas.numpy()
@@ -2625,6 +2652,7 @@ class MaskRCNN_Hand(nn.Module):
             gt_class_ids = Variable(gt_class_ids)
             gt_boxes = Variable(gt_boxes)
             gt_masks = Variable(gt_masks)
+            gt_edge = Variable(gt_edge).long()
 
             # To GPU
             if self.config.GPU_COUNT:
@@ -2634,14 +2662,16 @@ class MaskRCNN_Hand(nn.Module):
                 gt_class_ids = gt_class_ids.cuda()
                 gt_boxes = gt_boxes.cuda()
                 gt_masks = gt_masks.cuda()
+                gt_edge = gt_edge.cuda()
 
             # Run object detection
-            rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
+            rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, hed_edge = \
                 self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
 
             # Compute losses
-            rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss = compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
-            loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss
+            rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss, hed_loss = \
+                compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, gt_edge, hed_edge)
+            loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss + hed_loss
 
             # Backpropagation
             loss.backward()
@@ -2653,10 +2683,12 @@ class MaskRCNN_Hand(nn.Module):
 
             # Progress
             printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
-                             suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - mrcnn_mask_loss: {:.5f}".format(
+                             suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} -"
+                                    " mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - mrcnn_mask_loss: {:.5f} "
+                                    "- hed_loss: {:.5f} ".format(
                                  loss.data.item(), rpn_class_loss.data.item(), rpn_bbox_loss.data.item(),
                                  mrcnn_class_loss.data.item(), mrcnn_bbox_loss.data.item(),
-                                 mrcnn_mask_loss.data.item()), length=10)
+                                 mrcnn_mask_loss.data.item(), hed_loss.data.item(),) ,length=10)
 
             # Statistics
             loss_sum += loss.data.item()/steps
@@ -2665,13 +2697,14 @@ class MaskRCNN_Hand(nn.Module):
             loss_mrcnn_class_sum += mrcnn_class_loss.data.item()/steps
             loss_mrcnn_bbox_sum += mrcnn_bbox_loss.data.item()/steps
             loss_mrcnn_mask_sum += mrcnn_mask_loss.data.item()/steps
+            loss_hed_sum += hed_loss.data.item()/steps
 
             # Break after 'steps' steps
             if step==steps-1:
                 break
             step += 1
 
-        return loss_sum, loss_rpn_class_sum, loss_rpn_bbox_sum, loss_mrcnn_class_sum, loss_mrcnn_bbox_sum, loss_mrcnn_mask_sum
+        return loss_sum, loss_rpn_class_sum, loss_rpn_bbox_sum, loss_mrcnn_class_sum, loss_mrcnn_bbox_sum, loss_mrcnn_mask_sum, loss_hed_sum
 
     def valid_epoch(self, datagenerator, steps):
 
@@ -2682,6 +2715,7 @@ class MaskRCNN_Hand(nn.Module):
         loss_mrcnn_class_sum = 0
         loss_mrcnn_bbox_sum = 0
         loss_mrcnn_mask_sum = 0
+        loss_hed_sum = 0
 
         for inputs in datagenerator:
             images = inputs[0]
@@ -2691,6 +2725,7 @@ class MaskRCNN_Hand(nn.Module):
             gt_class_ids = inputs[4]
             gt_boxes = inputs[5]
             gt_masks = inputs[6]
+            gt_edge = inputs[7]
 
             # image_metas as numpy array
             image_metas = image_metas.numpy()
@@ -2702,6 +2737,7 @@ class MaskRCNN_Hand(nn.Module):
             gt_class_ids = Variable(gt_class_ids, volatile=True)
             gt_boxes = Variable(gt_boxes, volatile=True)
             gt_masks = Variable(gt_masks, volatile=True)
+            gt_edge = Variable(gt_edge, volatile=True).long()
 
             # To GPU
             if self.config.GPU_COUNT:
@@ -2711,24 +2747,33 @@ class MaskRCNN_Hand(nn.Module):
                 gt_class_ids = gt_class_ids.cuda()
                 gt_boxes = gt_boxes.cuda()
                 gt_masks = gt_masks.cuda()
+                gt_edge = gt_edge.cuda()
 
             # Run object detection
-            rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
+            rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, hed_edge = \
                 self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
 
             if not target_class_ids.size() != torch.Size([0]):
                 continue
 
             # Compute losses
-            rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss = compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
-            loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss
+            rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss, hed_loss = compute_losses(rpn_match, rpn_bbox,
+                                                                                                               rpn_class_logits, rpn_pred_bbox,
+                                                                                                               target_class_ids, mrcnn_class_logits,
+                                                                                                               target_deltas, mrcnn_bbox,
+                                                                                                               target_mask, mrcnn_mask,
+                                                                                                               gt_edge,
+                                                                                                               hed_edge)
+            loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss + hed_loss
 
             # Progress
             printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
-                             suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - mrcnn_mask_loss: {:.5f}".format(
+                             suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} -"
+                                    " mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - mrcnn_mask_loss: {:.5f} "
+                                    "- hed_loss: {:.5f} ".format(
                                  loss.data.item(), rpn_class_loss.data.item(), rpn_bbox_loss.data.item(),
                                  mrcnn_class_loss.data.item(), mrcnn_bbox_loss.data.item(),
-                                 mrcnn_mask_loss.data.item()), length=10)
+                                 mrcnn_mask_loss.data.item(), hed_loss.data.item(),) ,length=10)
 
             # Statistics
             loss_sum += loss.data.item()/steps
@@ -2737,13 +2782,14 @@ class MaskRCNN_Hand(nn.Module):
             loss_mrcnn_class_sum += mrcnn_class_loss.data.item()/steps
             loss_mrcnn_bbox_sum += mrcnn_bbox_loss.data.item()/steps
             loss_mrcnn_mask_sum += mrcnn_mask_loss.data.item()/steps
+            loss_hed_sum += hed_loss.data.item()/steps
 
             # Break after 'steps' steps
             if step==steps-1:
                 break
             step += 1
 
-        return loss_sum, loss_rpn_class_sum, loss_rpn_bbox_sum, loss_mrcnn_class_sum, loss_mrcnn_bbox_sum, loss_mrcnn_mask_sum
+        return loss_sum, loss_rpn_class_sum, loss_rpn_bbox_sum, loss_mrcnn_class_sum, loss_mrcnn_bbox_sum, loss_mrcnn_mask_sum, loss_hed_sum
 
 
 
