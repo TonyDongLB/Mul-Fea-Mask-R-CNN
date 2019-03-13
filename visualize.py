@@ -89,6 +89,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     figsize: (optional) the size of the image.
     """
     # Number of instances
+    if file_name is not None:
+        cv2.imwrite('result/' + file_name, masks)
     N = boxes.shape[0]
     if not N:
         print("\n*** No instances to display *** \n")

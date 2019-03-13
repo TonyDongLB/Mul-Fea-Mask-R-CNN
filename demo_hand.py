@@ -25,7 +25,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # Path to trained weights file
 # Download this file and place in the root of your
 # project (See README file for details)
-HAND_MODEL_PATH = '/home/dl/Work/pytorch-mask-rcnn/logs/hand20190304T1855/mask_rcnn_hand_0316.pth'
+HAND_MODEL_PATH = '/home/dl/Work/pytorch-mask-rcnn/logs/hand20190310T2207/mask_rcnn_hand_0115.pth'
 
 # Directory of images to run detection on
 IMAGE_DIR = '/home/dl/Work/pytorch-mask-rcnn/hand_instance/images/val'
@@ -36,6 +36,12 @@ class InferenceConfig(hand.HandConfig):
     # GPU_COUNT = 0 for CPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
+
+    # Pooled ROIs
+    POOL_SIZE = 7 # 给分类器用的
+    MASK_POOL_SIZE = 14 # 传给MSAK分支的feature map 大小
+    MASK_SHAPE = [56, 56] # 生成的最终mask大小
+
 
 config = InferenceConfig()
 config.display()
@@ -66,4 +72,4 @@ for file_name in file_names:
     r = results[0]
     visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
                             class_names, r['scores'], file_name=file_name)
-    plt.show()
+    # plt.show()
